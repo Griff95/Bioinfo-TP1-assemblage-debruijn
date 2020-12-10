@@ -24,13 +24,13 @@ random.seed(9001)
 from random import randint
 import statistics
 
-__author__ = "Your Name"
+__author__ = "Pierre Côte"
 __copyright__ = "Universite Paris Diderot"
-__credits__ = ["Your Name"]
+__credits__ = ["Pierre Côte"]
 __license__ = "GPL"
 __version__ = "1.0.0"
-__maintainer__ = "Your Name"
-__email__ = "your@email.fr"
+__maintainer__ = "Pierre Côte"
+__email__ = "cotepierre@eisti.eu"
 __status__ = "Developpement"
 
 def isfile(path):
@@ -66,19 +66,38 @@ def get_arguments():
 
 
 def read_fastq(fastq_file):
-    pass
+    with open(fastq_file) as file:
+        for line in file:
+            seq = next(file)
+            next(file)
+            next(file)
+            yield seq
 
 
 def cut_kmer(read, kmer_size):
-    pass
+    for i in range(len(read) - kmer_size):
+        yield read[i:i+kmer_size]
 
 
 def build_kmer_dict(fastq_file, kmer_size):
-    pass
+    build = dict()
+    for seq in read_fastq(fastq_file):
+        for kmer in cut_kmer(seq, kmer_size):
+            if kmer in build:
+                build[kmer] += 1
+            else:
+                build[kmer] = 1
+    return build
 
 
 def build_graph(kmer_dict):
-    pass
+    G = nx.DiGraph()
+    for key in kmer_dict.keys():
+        prefix = key[:-1]
+        suffix = key[1:]
+        print(prefix, suffix)
+        G.add_edge(prefix, suffix, weight=kmer_dict[key])
+    return G
 
 
 def remove_paths(graph, path_list, delete_entry_node, delete_sink_node):
@@ -88,7 +107,7 @@ def std(data):
     pass
 
 
-def select_best_path(graph, path_list, path_length, weight_avg_list, 
+def select_best_path(graph, path_list, path_length, weight_avg_list,
                      delete_entry_node=False, delete_sink_node=False):
     pass
 
@@ -128,6 +147,13 @@ def main():
     """
     # Get arguments
     args = get_arguments()
+    dict = build_kmer_dict(args.fastq_file, 20)
+    # print(dict)
+    graph = build_graph(dict)
+    # print(graph.nodes)
+    # print(graph.edges)
+    # print(graph.degree)
+
 
 if __name__ == '__main__':
     main()
