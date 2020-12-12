@@ -16,17 +16,13 @@
 import argparse
 import os
 import sys
-import networkx as nx
-import matplotlib
-import tkinter
 import itertools
-import matplotlib.pyplot as plt
-from operator import itemgetter
-from collections import defaultdict
-import random
-random.seed(9001)
-from random import randint
 import statistics
+import random
+from random import randint
+from collections import defaultdict
+import networkx as nx
+random.seed(9001)
 
 __author__ = "Pierre Côte"
 __copyright__ = "Universite Paris Diderot"
@@ -70,23 +66,22 @@ def get_arguments():
 
 
 def read_fastq(fastq_file):
+    """Generator that yield each line sequence of fastq file"""
     with open(fastq_file) as file:
-        for line in file:
-            seq = next(file)
-            # delete newline char
-            if seq[-1] == '\n':
-                seq = seq[:-1]
-            next(file)
-            next(file)
-            yield seq
+        lines = file.read().splitlines()
+    desired_lines = lines[1::4]
+    for line in desired_lines:
+        yield line
 
 
 def cut_kmer(read, kmer_size):
+    """Generator of kmer of size kmer_size from sequence read"""
     for i in range(len(read) - kmer_size +1):
         yield read[i:i+kmer_size]
 
 
 def build_kmer_dict(fastq_file, kmer_size):
+    """Return a dictionary of kmer from fastq_file of size kmer_size"""
     build = dict()
     for seq in read_fastq(fastq_file):
         for kmer in cut_kmer(seq, kmer_size):
@@ -98,19 +93,21 @@ def build_kmer_dict(fastq_file, kmer_size):
 
 
 def build_graph(kmer_dict):
-    G = nx.DiGraph()
+    "Return networkx weighted DiGraph based on kmer dict"
+    graph = nx.DiGraph()
     for key in kmer_dict.keys():
         prefix = key[:-1]
         suffix = key[1:]
         # print(prefix, suffix)
-        G.add_edge(prefix, suffix, weight=kmer_dict[key])
-    return G
+        graph.add_edge(prefix, suffix, weight=kmer_dict[key])
+    return graph
 
 
 def remove_paths(graph, path_list, delete_entry_node, delete_sink_node):
+    """Return graph with removed path from path_list"""
     for path in path_list:
-        for n1, n2 in itertools.zip_longest(path[:-1], path[1:]):
-            graph.remove_edge(n1, n2)
+        for node_1, node_2 in itertools.zip_longest(path[:-1], path[1:]):
+            graph.remove_edge(node_1, node_2)
     if delete_entry_node:
         for entry in map(lambda x: x[0], path_list):
             graph.remove_node(entry)
@@ -123,35 +120,39 @@ def remove_paths(graph, path_list, delete_entry_node, delete_sink_node):
 
 
 def std(data):
+    """Return standard deviation of data list"""
     return statistics.stdev(data)
 
 
 def select_best_path(graph, path_list, path_length, weight_avg_list,
                      delete_entry_node=False, delete_sink_node=False):
+    """Return graph with selected best path of path_list, remove others"""
     path_data = list(zip(weight_avg_list, path_length, range(len(path_list))))
     ranked = sorted(path_data, key = lambda x: (-x[0], -x[1]))
     best = ranked[0]
     candidates = [x for x in ranked if x[0] == best[0] and x[1] == best[1]]
-    r = randint(0, len(candidates)-1)
-    best_path_index = candidates[r][2]
+    r_int = randint(0, len(candidates)-1)
+    best_path_index = candidates[r_int][2]
     to_remove = path_list[:best_path_index] + path_list[best_path_index+1:]
     return remove_paths(graph, to_remove, delete_entry_node, delete_sink_node)
 
 
 def path_average_weight(graph, path):
+    """Return average weight of all edge weight in path"""
     weight_sum = 0
     count = 0
-    for n1, n2 in itertools.zip_longest(path[:-1], path[1:]):
-        weight_sum += graph[n1][n2]['weight']
+    for node_1, node_2 in itertools.zip_longest(path[:-1], path[1:]):
+        weight_sum += graph[node_1][node_2]['weight']
         count += 1
     return weight_sum/count
 
 
 def solve_bubble(graph, ancestor_node, descendant_node):
+    """Return graph without any bubbles between ancestor and descendant nodes"""
     path_list = []
     path_length = []
     path_avg_weight = []
-    for path in nx.all_simple_paths(graph, source=ancestor_node, target=descendant_node):
+    for path in nx.all_simple_paths(graph, ancestor_node, descendant_node):
         path_list.append(path)
         path_length.append(len(path))
         path_avg_weight.append(path_average_weight(graph, path))
@@ -159,71 +160,85 @@ def solve_bubble(graph, ancestor_node, descendant_node):
 
 
 def simplify_bubbles(graph):
+    """Return a graph copy without any bubbles"""
     graph_copy = graph.copy()
     for node in graph.nodes():
         if graph.in_degree(node) > 1:
             predecessors = list(graph.predecessors(node))
             pairs = list(itertools.combinations(predecessors, 2))
             ancestors = nx.all_pairs_lowest_common_ancestor(graph, pairs)
-            for ((n1, n2), lca) in ancestors:
+            for (_, lca) in ancestors:
                 solve_bubble(graph_copy, lca, node)
     return graph_copy
 
 
 def solve_entry_tips(graph, starting_nodes):
+    """Return graph without tips of a starting node"""
     intersections_dict = defaultdict(list)
-    # get first met intersection points for each starting node: find next node with 2 or more predecessors
+    # get first met intersection points for each starting node
+    # find successor node with 2 or more predecessors
     for starting in starting_nodes:
         intersection = starting
         while graph.out_degree(intersection)==1:
             intersection = list(graph.successors(intersection))[0]
             if graph.in_degree(intersection) > 1:
                 break
-        # check
+        # check that we get an intersection point
+        # save starting point in the list for key 'intersection' in dict
         if graph.in_degree(intersection) > 1:
             intersections_dict[intersection].append(starting)
 
+    # for each intersection point (as key in dict)
+    # get all candidates (= starting points that share the same intersection)
+    # select best path for all combinations of candidates with the intersection point
     for inter in intersections_dict.keys():
         candidates = intersections_dict[inter]
         if len(candidates) > 1:
-            for n1, n2 in itertools.combinations(candidates, 2):
-                path1 = nx.shortest_path(graph, source=n1, target=inter)
-                path2 = nx.shortest_path(graph, source=n2, target=inter)
+            for (candidate_1, candidate_2) in itertools.combinations(candidates, 2):
+                path1 = nx.shortest_path(graph, candidate_1, inter)
+                path2 = nx.shortest_path(graph, candidate_2, inter)
                 path_list = [path1, path2]
                 path_weight = [path_average_weight(graph, p) for p in path_list]
                 path_length = [len(p) for p in path_list]
-                graph = select_best_path(graph, path_list, path_length, path_weight, False, False)
+                graph = select_best_path(graph, path_list, path_length, path_weight)
     return graph
 
 
 def solve_out_tips(graph, ending_nodes):
+    """Return graph without tips of an ending node"""
     intersections_dict = defaultdict(list)
-    # get first met intersection points for each starting node: find successor node with 2 or more predecessors
+    # get first met intersection points for each ending node
+    # find predecessors node with 2 or more successors
     for ending in ending_nodes:
         intersection = ending
         while graph.in_degree(intersection)==1:
             intersection = list(graph.predecessors(intersection))[0]
             if graph.out_degree(intersection) > 1:
                 break
-        # check
+        # check that we get an intersection point
+        # save ending point in the list for key 'intersection' in dict
         if graph.out_degree(intersection) > 1:
             intersections_dict[intersection].append(ending)
 
+    # for each intersection point (as key in dict)
+    # get all candidates (= ending points that share the same intersection)
+    # select best path for all combinations of candidates with the intersection point
     for inter in intersections_dict.keys():
         candidates = intersections_dict[inter]
         if len(candidates) > 1:
-            for n1, n2 in itertools.combinations(candidates, 2):
-                path1 = nx.shortest_path(graph, source=inter, target=n1)
-                path2 = nx.shortest_path(graph, source=inter, target=n2)
+            for (candidate_1, candidate_2) in itertools.combinations(candidates, 2):
+                path1 = nx.shortest_path(graph, inter, candidate_1)
+                path2 = nx.shortest_path(graph, inter, candidate_2)
                 path_list = [path1, path2]
                 path_weight = [path_average_weight(graph, p) for p in path_list]
                 path_length = [len(p) for p in path_list]
-                graph = select_best_path(graph, path_list, path_length, path_weight, False, False)
+                graph = select_best_path(graph, path_list, path_length, path_weight)
     return graph
 
 
 
 def get_starting_nodes(graph):
+    """Return list of starting nodes (no predecessors) from graph"""
     starting_nodes = []
     for node in graph.nodes:
         if len(list(graph.predecessors(node))) == 0:
@@ -232,6 +247,7 @@ def get_starting_nodes(graph):
 
 
 def get_sink_nodes(graph):
+    """Return list of ending nodes (no successor) from graph"""
     ending_nodes = []
     for node in graph.nodes:
         if len(list(graph.successors(node))) == 0:
@@ -240,13 +256,15 @@ def get_sink_nodes(graph):
 
 
 def get_contigs(graph, starting_nodes, ending_nodes):
+    """Return list of contig in graph
+    from a node of starting_nodes list to a node of ending_nodes list"""
     contigs = []
     for start in starting_nodes:
         for end in ending_nodes:
             for path in nx.all_simple_paths(graph, source=start, target=end):
                 contig = path[0]
-                for n in path[1:]:
-                    contig += n[-1]
+                for node in path[1:]:
+                    contig += node[-1]
                 contig_size = len(contig)
                 contigs.append((contig, contig_size))
     return contigs
@@ -258,12 +276,13 @@ def fill(text, width=80):
 
 
 def save_contigs(contigs_list, output_file):
-    with open(output_file, 'w') as f:
-        for i in range(len(contigs_list)):
-            seq, size = contigs_list[i]
-            f.write(">contig_"+str(i) + " len=" + str(size)+'\n')
-            f.write(fill(seq))
-            f.write('\n')
+    """Write contigs_list in output_file as fasta format"""
+    with open(output_file, 'w') as file:
+        for i, contig in enumerate(contigs_list):
+            seq, size = contig
+            file.write(">contig_"+str(i) + " len=" + str(size)+'\n')
+            file.write(fill(seq))
+            file.write('\n')
 
 
 
@@ -298,8 +317,8 @@ def main():
     args = get_arguments()
 
     # build graph
-    dict = build_kmer_dict(args.fastq_file, 21)
-    graph = build_graph(dict)
+    kmer_dict = build_kmer_dict(args.fastq_file, 21)
+    graph = build_graph(kmer_dict)
 
     # solve bubble
     graph = simplify_bubbles(graph)
