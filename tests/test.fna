@@ -1,8 +1,8 @@
->1 len=8
+>contig_0 len=8
 TCAGCGAT
->2 len=8
+>contig_1 len=8
 TCAGCGAA
->3 len=8
+>contig_2 len=8
 ACAGCGAT
->4 len=8
+>contig_3 len=8
 ACAGCGAA

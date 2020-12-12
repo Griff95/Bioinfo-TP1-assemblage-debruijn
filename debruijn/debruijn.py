@@ -16,19 +16,17 @@
 import argparse
 import os
 import sys
-import statistics
+import networkx as nx
+import matplotlib
+import tkinter
 import itertools
+import matplotlib.pyplot as plt
+from operator import itemgetter
+from collections import defaultdict
 import random
 random.seed(9001)
 from random import randint
-from operator import itemgetter
-
-import matplotlib
-import tkinter
-import matplotlib.pyplot as plt
-import networkx as nx
-
-
+import statistics
 
 __author__ = "Pierre Côte"
 __copyright__ = "Universite Paris Diderot"
@@ -123,6 +121,7 @@ def remove_paths(graph, path_list, delete_entry_node, delete_sink_node):
     graph.remove_nodes_from(remove)
     return graph
 
+
 def std(data):
     return statistics.stdev(data)
 
@@ -138,6 +137,7 @@ def select_best_path(graph, path_list, path_length, weight_avg_list,
     to_remove = path_list[:best_path_index] + path_list[best_path_index+1:]
     return remove_paths(graph, to_remove, delete_entry_node, delete_sink_node)
 
+
 def path_average_weight(graph, path):
     weight_sum = 0
     count = 0
@@ -145,6 +145,7 @@ def path_average_weight(graph, path):
         weight_sum += graph[n1][n2]['weight']
         count += 1
     return weight_sum/count
+
 
 def solve_bubble(graph, ancestor_node, descendant_node):
     path_list = []
@@ -162,17 +163,63 @@ def simplify_bubbles(graph):
     for node in graph.nodes():
         if graph.in_degree(node) > 1:
             predecessors = list(graph.predecessors(node))
-            pairs = list(itertools.zip_longest(predecessors[:-1], predecessors[1:]))
+            pairs = list(itertools.combinations(predecessors, 2))
             ancestors = nx.all_pairs_lowest_common_ancestor(graph, pairs)
             for ((n1, n2), lca) in ancestors:
                 solve_bubble(graph_copy, lca, node)
     return graph_copy
 
+
 def solve_entry_tips(graph, starting_nodes):
-    pass
+    intersections_dict = defaultdict(list)
+    # get first met intersection points for each starting node: find next node with 2 or more predecessors
+    for starting in starting_nodes:
+        intersection = starting
+        while graph.out_degree(intersection)==1:
+            intersection = list(graph.successors(intersection))[0]
+            if graph.in_degree(intersection) > 1:
+                break
+        # check
+        if graph.in_degree(intersection) > 1:
+            intersections_dict[intersection].append(starting)
+
+    for inter in intersections_dict.keys():
+        candidates = intersections_dict[inter]
+        if len(candidates) > 1:
+            for n1, n2 in itertools.combinations(candidates, 2):
+                path1 = nx.shortest_path(graph, source=n1, target=inter)
+                path2 = nx.shortest_path(graph, source=n2, target=inter)
+                path_list = [path1, path2]
+                path_weight = [path_average_weight(graph, p) for p in path_list]
+                path_length = [len(p) for p in path_list]
+                graph = select_best_path(graph, path_list, path_length, path_weight, False, False)
+    return graph
+
 
 def solve_out_tips(graph, ending_nodes):
-    pass
+    intersections_dict = defaultdict(list)
+    # get first met intersection points for each starting node: find successor node with 2 or more predecessors
+    for ending in ending_nodes:
+        intersection = ending
+        while graph.in_degree(intersection)==1:
+            intersection = list(graph.predecessors(intersection))[0]
+            if graph.out_degree(intersection) > 1:
+                break
+        # check
+        if graph.out_degree(intersection) > 1:
+            intersections_dict[intersection].append(ending)
+
+    for inter in intersections_dict.keys():
+        candidates = intersections_dict[inter]
+        if len(candidates) > 1:
+            for n1, n2 in itertools.combinations(candidates, 2):
+                path1 = nx.shortest_path(graph, source=inter, target=n1)
+                path2 = nx.shortest_path(graph, source=inter, target=n2)
+                path_list = [path1, path2]
+                path_weight = [path_average_weight(graph, p) for p in path_list]
+                path_length = [len(p) for p in path_list]
+                graph = select_best_path(graph, path_list, path_length, path_weight, False, False)
+    return graph
 
 
 
@@ -183,12 +230,14 @@ def get_starting_nodes(graph):
             starting_nodes.append(node)
     return starting_nodes
 
+
 def get_sink_nodes(graph):
     ending_nodes = []
     for node in graph.nodes:
         if len(list(graph.successors(node))) == 0:
             ending_nodes.append(node)
     return ending_nodes
+
 
 def get_contigs(graph, starting_nodes, ending_nodes):
     contigs = []
@@ -212,9 +261,31 @@ def save_contigs(contigs_list, output_file):
     with open(output_file, 'w') as f:
         for i in range(len(contigs_list)):
             seq, size = contigs_list[i]
-            f.write(">"+str(i+1) + " len=" + str(size)+'\n')
+            f.write(">contig_"+str(i) + " len=" + str(size)+'\n')
             f.write(fill(seq))
             f.write('\n')
+
+
+
+
+# def draw_graph(graph, graphimg_file):
+#     """Draw the graph
+#     """
+#     fig, ax = plt.subplots()
+#     elarge = [(u, v) for (u, v, d) in graph.edges(data=True) if d['weight'] > 3]
+#     #print(elarge)
+#     esmall = [(u, v) for (u, v, d) in graph.edges(data=True) if d['weight'] <= 3]
+#     #print(elarge)
+#     # Draw the graph with networkx
+#     #pos=nx.spring_layout(graph)
+#     pos = nx.random_layout(graph)
+#     nx.draw_networkx_nodes(graph, pos, node_size=6)
+#     nx.draw_networkx_edges(graph, pos, edgelist=elarge, width=6)
+#     nx.draw_networkx_edges(graph, pos, edgelist=esmall, width=6, alpha=0.5,
+#                            edge_color='b', style='dashed')
+#     #nx.draw_networkx(graph, pos, node_size=10, with_labels=False)
+#     # save image
+#     plt.savefig(graphimg_file)
 
 #==============================================================
 # Main program
@@ -225,23 +296,26 @@ def main():
     """
     # Get arguments
     args = get_arguments()
+
+    # build graph
     dict = build_kmer_dict(args.fastq_file, 21)
-    # print(dict)
     graph = build_graph(dict)
-    # plt.figure()
-    # nx.draw(graph, with_labels=True, font_weight='bold')
-    # plt.show()
-    # print(graph.nodes)
-    # print(graph.edges)
-    # print(graph.degree)
+
+    # solve bubble
+    graph = simplify_bubbles(graph)
+
+    # solve tips
+    starts = get_starting_nodes(graph)
+    graph = solve_entry_tips(graph, starts)
+    ends = get_sink_nodes(graph)
+    graph = solve_out_tips(graph, ends)
+
+    # save contigs
     starts = get_starting_nodes(graph)
     ends = get_sink_nodes(graph)
-    print(starts)
-    print(ends)
     contigs = get_contigs(graph, starts, ends)
-    print(*contigs, sep='\n')
-    save_contigs(contigs, "test")
-    print(list(cut_kmer("TCAGA", 3)))
+    save_contigs(contigs, "contig")
+    # draw_graph(graph, 'graph.png')
 
 
 if __name__ == '__main__':
